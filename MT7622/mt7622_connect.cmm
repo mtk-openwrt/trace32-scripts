@@ -1,0 +1,60 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2021, MediaTek Inc. All rights reserved.
+// Author: Weijie Gao <weijie.gao@mediatek.com>
+
+// Set to 1 to enable chip reset
+&ENRESET=0
+
+// Set to 1 to debug only core 0
+&NR_CPUS=2
+
+// System configuration
+SYStem.RESet
+
+IF &ENRESET==1
+(
+	SYStem.Option EnReset ON
+	SYStem.Option WaitReset 100.ms
+)
+ELSE
+(
+	SYStem.Option EnReset OFF
+)
+
+SYStem.JtagClock 10.MHz
+SYStem.CPU CORTEXA53
+SYStem.CONFIG MEMORYACCESSPORT 0
+SYStem.CONFIG DEBUGACCESSPORT 1
+
+// Multicore configuration
+IF &NR_CPUS==1
+(
+	SYStem.CONFIG CoreNumber 1
+	SYStem.CONFIG COREBASE 0x80810000
+	SYStem.CONFIG CTIBASE 0x80820000
+)
+ELSE
+(
+	SYStem.CONFIG CoreNumber 2
+	CORE.ASSIGN 1. 2.
+	SYStem.CONFIG COREBASE 0x80810000 0x80910000
+	SYStem.CONFIG CTIBASE 0x80820000 0x80920000
+)
+
+// Attach to the CPU
+SYStem.Up
+
+// Mask interrupts
+SETUP.IMASKHLL ON
+SETUP.IMASKASM ON
+
+// Stop CPU execution
+Break
+
+// Delete all breakpoints
+Break.Delete /ALL
+
+// Disable Watchdog
+Data.Set ASD:0x10212000 %Long 0x22000000
+
+ENDDO

@@ -1,0 +1,194 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2021, MediaTek Inc. All rights reserved.
+// Author: Weijie Gao <weijie.gao@mediatek.com>
+
+// Set to 1 to enable chip reset
+&ENRESET=1
+
+// Set to 1 to use dual DDR chips with Fly-by topology
+&DDR3_FLYBY=0
+
+// Set to 1 to use files for SDK 5.x, 0 for SDK 4.x
+&USE_SDK_NEW=0
+
+// [SDK 4.x ONLY] SPI-NAND driver selection
+// Set to 1 to use new SPI-NAND driver (date after 2020/10/20)
+// Set to 0 to use old SPI-NAND driver with BMT
+&USE_NEW_SNAND_DRIVER=1
+
+// [SDK 4.x ONLY] Set to 1 to use AX flash layout for SPI-NAND/NOR board
+&USE_AX_LAYOUT=1
+
+// [NAND debugging] Set to 1 to enable NMBM for new SPI-NAND driver
+&USE_NMBM=1
+
+// Flash device selection
+// 0 - SNAND
+// 1 - NOR
+// 2 - eMMC
+// 3 - SD
+&FLASH_TYPE=0
+
+// Other files
+GLOBAL &BL2
+GLOBAL &BL33
+GLOBAL &SUBDIR
+
+IF &DDR3_FLYBY==0
+	&BL2="bl2.elf"
+ELSE
+	&BL2="bl2-flyby.elf"
+
+IF &USE_SDK_NEW==0
+	&SUBDIR="old"
+ELSE
+	&SUBDIR="new"
+
+IF &FLASH_TYPE==0
+(
+	IF (&USE_SDK_NEW==0)&&(&USE_NEW_SNAND_DRIVER==0)
+	(
+		IF &USE_AX_LAYOUT==1
+			&BL33="u-boot-snand-bmt-ax.bin"
+		ELSE
+			&BL33="u-boot-snand-bmt.bin"
+	)
+	ELSE
+	(
+		IF (&USE_SDK_NEW==1)||(&USE_AX_LAYOUT==1)
+		(
+			IF &USE_NMBM==0
+				&BL33="u-boot-snand-ax.bin"
+			ELSE
+				&BL33="u-boot-snand-nmbm-ax.bin"
+		)
+		ELSE
+		(
+			IF &USE_NMBM==0
+				&BL33="u-boot-snand.bin"
+			ELSE
+				&BL33="u-boot-snand-nmbm.bin"
+		)
+	)
+)
+ELSE IF &FLASH_TYPE==1
+(
+	IF (&USE_SDK_NEW==1)||(&USE_AX_LAYOUT==1)
+		&BL33="u-boot-nor-ax.bin"
+	ELSE
+		&BL33="u-boot-nor.bin"
+)
+ELSE IF &FLASH_TYPE==2
+(
+	&BL33="u-boot-emmc.bin"
+)
+ELSE IF &FLASH_TYPE==3
+(
+	&BL33="u-boot-sd.bin"
+)
+ELSE
+(
+	PRINT "Invalid flash type"
+	END
+)
+
+// System configuration
+SYStem.RESet
+
+IF &ENRESET==1
+(
+	SYStem.Option EnReset ON
+	SYStem.Option WaitReset 600.ms
+)
+ELSE
+(
+	SYStem.Option EnReset OFF
+)
+
+SYStem.Option ResBreak OFF
+SYStem.JtagClock 10.MHz
+SYStem.CPU CORTEXA53
+SYStem.CONFIG MEMORYACCESSPORT 0
+SYStem.CONFIG DEBUGACCESSPORT 1
+
+// Multicore configuration
+SYStem.CONFIG CoreNumber 2
+CORE.ASSIGN 1. 2.
+SYStem.CONFIG COREBASE 0x80810000 0x80910000
+SYStem.CONFIG CTIBASE 0x80820000 0x80920000
+
+// Attach to the CPU
+SYStem.Up
+
+// Select core 0
+CORE.Select 0
+
+// Mask interrupts
+SETUP.IMASKHLL ON
+SETUP.IMASKASM ON
+
+// Stop CPU execution
+Break
+
+// Delete all breakpoints
+Break.Delete /ALL
+
+// Disable Watchdog
+Data.Set ASD:0x10212000 %Long 0x22000000
+
+// Switch to AArch64 mode
+DO "~~~~/lib/reset_mode.cmm" 1
+
+// Load and run BL2 to initialize DRAM
+PRINT "Load and run BL2"
+SYStem.Option TURBO ON
+Data.LOAD.ELF "~~~~/recovery-files/&BL2"
+SYStem.Option TURBO OFF
+Break bl2_plat_handle_pre_image_load /Onchip
+Go
+WAIT !State.Run()
+
+// Load BL31 and U-Boot
+PRINT "Loading U-Boot"
+SYStem.Option TURBO ON
+
+IF &USE_SDK_NEW==0
+	Data.LOAD.Binary "~~~~/recovery-files/&SUBDIR/&BL33" 0x41dffe00
+ELSE
+	Data.LOAD.Binary "~~~~/recovery-files/&SUBDIR/&BL33" 0x41e00000
+
+PRINT "Loading BL31"
+IF &USE_SDK_NEW==0
+(
+	Data.LOAD.Binary "~~~~/recovery-files/&SUBDIR/bl31.bin" 0x43000BC0
+	Register.Set PC 0x43001000	// BL31 entry point
+
+	// Set BL31 parameters
+	Register.Set r4 0		// boot_arg_t addr
+	Register.Set r5 0		// boot_arg_t size
+	Register.Set r6 0x41e00000	// BL33 entry point
+	Register.Set r7 0x00101000	// atf_arg_t_ptr addr
+
+	// Build atf_arg_t_ptr contents
+	Data.Set SD:0x00101000 %Long 0x4D415446	// atf_magic
+	Data.Set SD:0x00101004 %Long 0		// tee_support
+	Data.Set SD:0x00101008 %Long 0		// tee_entry
+	Data.Set SD:0x0010100C %Long 0x00101100	// tee_boot_arg_addr
+	Data.Set SD:0x00101028 %Long 0x11002000	// atf_log_port (UART0)
+	Data.Set SD:0x0010102C %Long 0x0001C200	// atf_log_baudrate (115200)
+	Data.Set SD:0x00101030 %Long 0		// atf_log_buf_start
+	Data.Set SD:0x00101034 %Long 0		// atf_log_buf_size
+	Data.Set SD:0x00101038 %Long 0x119	// atf_irq_num (32 + 249)
+	Data.Set SD:0x0010104C %Long 0		// atf_aee_debug_buf_start
+	Data.Set SD:0x00101050 %Long 0		// atf_aee_debug_buf_size
+)
+ELSE
+(
+	Data.LOAD.ELF "~~~~/recovery-files/&SUBDIR/bl31.elf"
+)
+SYStem.Option TURBO OFF
+
+// Run recovery
+Go
+
+ENDDO

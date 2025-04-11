@@ -1,0 +1,24 @@
+
+GOSUB IS_CVD
+ENTRY &res
+
+IF (&res)==1
+	PRINT "IS CVD"
+ELSE
+	PRINT "IS TRACE32"
+
+ENDDO
+
+IS_CVD:
+	LOCAL &res
+	&res=1
+
+	ON ERROR GOSUB
+	(
+		ON ERROR inherit
+		&res=0
+		RETURN 0
+	)
+
+	CVD.VERSION.SW()
+	RETURN &res

@@ -1,0 +1,139 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2021, MediaTek Inc. All rights reserved.
+// Author: Weijie Gao <weijie.gao@mediatek.com>
+
+ENTRY &RESET_MODE_64
+
+// Get current CPU execution mode
+GLOBAL &IS_CPU_IN_AARCH64
+&IS_CPU_IN_AARCH64=0
+GOSUB IS_AARCH64
+ENTRY &IS_CPU_IN_AARCH64
+
+IF &IS_CPU_IN_AARCH64==1
+(
+	// Switch to EL3H
+	Register.Set CPSR (Register(CPSR)&0xffffffe0)|0xd
+
+	// Disable MMU in SCTLR_EL3
+	PER.Set.Field SPR:0x36100 %Quad 0x0000000000000001 0
+
+	IF &RESET_MODE_64==0
+	(
+		// Switch to AArch32 mode
+		GOSUB RESET_TO_AARCH32
+
+		PRINT "Switched to AArch32 mode"
+	)
+)
+ELSE IF &IS_CPU_IN_AARCH64==0
+(
+	// Switch to MON mode (EL3)
+	Register.Set NS 0
+	Register.Set CPSR (Register(CPSR)&0xffffffe0)|0x16
+
+	// Disable MMU in SCTLR_EL3
+	PER.Set.Field SPR:0x36100 %Quad 0x0000000000000001 0
+
+	IF &RESET_MODE_64==1
+	(
+		// Switch to AArch64 mode
+		GOSUB RESET_TO_AARCH64
+
+		PRINT "Switched to AArch64 mode"
+	)
+)
+
+ENDDO
+
+IS_AARCH64:
+	PRIVATE &edscr
+	PRIVATE &rw
+	PRIVATE &el
+	PRIVATE &unused
+
+	// ON ERROR CONTinue	// XXX: TRACE32 and newer CVD should use this line
+	ON ERROR GOSUB
+	(
+		ON ERROR inherit
+		RETURN
+	)
+
+	// Trigger a bus error
+	// XXX: TRACE32 and newer CVD should use DAP:
+	&unused=Data.Long(APB:0x8080FFF0)
+
+	// Revert things back, and read effective EDSCR
+	ON ERROR inherit
+	&edscr=Data.Long(APB:0x80810088)
+
+	// Use EDSCR to determine the execution state of core 0
+	&el=((&edscr)>>(8))&(0x3)
+	&rw=((&edscr)>>(0xa))&(0xf)
+
+	IF (((&rw)>>(&el))&(1))==1
+	(
+		PRINT "In AArch64 mode"
+		RETURN 1
+	)
+
+	PRINT "In AArch32 mode"
+	RETURN 0
+
+RESET_TO_AARCH64:
+	PRIVATE &vbase
+
+	// Set reset vector base address
+	&vbase=Data.Long(SD:0x10200038)
+	Data.Set SD:0x10200038 %Long 0x101000
+
+	// Switch to ARM mode
+	Register.Set T 0
+
+	// Use RMR_EL3 to warm reset to AArch64
+	Data.Set SPR:0x36C02 %Long 0x3
+
+	// Execute WFI
+	Data.Assemble SD:0x100000 wfi
+	Data.Assemble SD:0x100004 b 0x100000
+	Register.Set PC 0x100000
+
+	// Break on preset reset vector base address
+	Break 0x101000 /Onchip
+	Go
+	Wait !State.Run()
+
+	// Restore reset vector base address
+	Data.Set SD:0x10200038 %Long &vbase
+
+	RETURN
+
+RESET_TO_AARCH32:
+	PRIVATE &vbase
+
+	// Set reset vector base address
+	&vbase=Data.Long(SD:0x10200038)
+	Data.Set SD:0x10200038 %Long 0x101000
+
+	// Use RMR_EL3 to warm reset to AArch32
+	Data.Set SPR:0x36C02 %Long 0x2
+
+	// Execute WFI
+	Data.Assemble SD:0x100000 wfi
+	Data.Assemble SD:0x100004 b 0x100000
+	Register.Set PC 0x100000
+
+	// Break on preset reset vector base address
+	Break 0x101000 /Onchip
+	Break 0 /Onchip
+	Go
+	Wait !State.Run()
+
+	// Restore reset vector base address
+	Data.Set SD:0x10200038 %Long &vbase
+
+	// Delete unused breakpoints
+	Break.Delete 0x101000
+	Break.Delete 0
+
+	RETURN

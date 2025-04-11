@@ -1,0 +1,56 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2021, MediaTek Inc. All rights reserved.
+// Author: Weijie Gao <weijie.gao@mediatek.com>
+
+// Set to 1 to enable chip reset
+&ENRESET=1
+
+// System configuration
+SYStem.RESet
+
+IF &ENRESET==1
+(
+	SYStem.Option EnReset ON
+	SYStem.Option WaitReset 100.ms
+)
+else
+(
+	SYStem.Option EnReset OFF
+)
+
+SYStem.Option ResBreak OFF
+SYStem.JtagClock 10.MHz
+SYStem.CPU CORTEXA73
+SYStem.CONFIG MEMORYACCESSPORT 0
+SYStem.CONFIG DEBUGACCESSPORT 1
+
+// Multicore configuration
+SYStem.CONFIG CoreNumber 4
+CORE.ASSIGN 1.
+// CORE.ASSIGN 1. 2. 3. 4. // Use this line if all CPUs have been brought up
+SYStem.CONFIG COREBASE 0x8D410000 0x8D510000 0x8D610000 0x8D710000
+SYStem.CONFIG CTIBASE 0x8D420000 0x8D520000 0x8D620000 0x8D720000
+
+// Attach to the CPU
+SYStem.Up
+
+// Mask interrupts
+SETUP.IMASKHLL ON
+SETUP.IMASKASM ON
+
+// Stop CPU execution
+Break
+
+// Disable MMU (AArch32 mode)
+// PER.Set.Field C15:1 0x1 0x0
+
+// Disable MMU in EL1 (AArch64 mode)
+// Data.Set SPR:0x30100 0x0
+
+// Delete all breakpoints
+Break.Delete /ALL
+
+// Disable Watchdog
+Data.Set ASD:0x1001c000 %Long 0x22000000
+
+ENDDO

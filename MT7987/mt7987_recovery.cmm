@@ -1,0 +1,139 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2021, MediaTek Inc. All rights reserved.
+// Author: Weijie Gao <weijie.gao@mediatek.com>
+
+// Set to 1 to enable chip reset
+&ENRESET=1
+
+// Set to 1 to enable DDR4 initialization (Only IAP supports DDR4)
+&DRAM_USE_DDR4=1
+&DRAM_FREQ_3200=1  // DDR4-3200 (default if USE_DDR4=1)
+&DRAM_FREQ_2666=0  // DDR4-2666
+&DRAM_FREQ_2133=1  // DDR3-2133 (default if USE_DDR4=0)
+&DRAM_FREQ_1866=0  // DDR3-1866
+
+IF &DRAM_USE_DDR4==1
+(
+	&DRAM_FREQ_2133=0
+	&DRAM_FREQ_1866=0
+)
+ELSE
+(
+	&DRAM_FREQ_3200=0
+	&DRAM_FREQ_2666=0
+)
+
+
+// Set to 1 to enable DRAM debug log
+&DRAM_DEBUG_LOG=0
+
+// Flash device selection
+&BL33="u-boot-spim-nand-nmbm.bin" // SPI-NAND on SPI-M with NMBM
+//&BL33="u-boot-spim-nor.bin" // SPI-NOR on SPI-M
+//&BL33="u-boot-emmc.bin" // eMMC 4.5
+//&BL33="u-boot-sd.bin" // SD
+//&BL33="u-boot-nor-emmc.bin" // nor + eMMC 4.5
+
+// System configuration
+SYStem.RESet
+
+IF &ENRESET==1
+(
+	SYStem.Option EnReset ON
+	SYStem.Option WaitReset 100.ms
+)
+else
+(
+	SYStem.Option EnReset OFF
+)
+
+SYStem.Option ResBreak OFF
+SYStem.JtagClock 10.MHz
+SYStem.CPU CORTEXA53
+SYStem.CONFIG MEMORYACCESSPORT 0
+SYStem.CONFIG DEBUGACCESSPORT 1
+
+// Multicore configuration
+SYStem.CONFIG CoreNumber 4
+CORE.ASSIGN 1.
+SYStem.CONFIG COREBASE 0x8D410000 0x8D510000 0x8D610000 0x8D710000
+SYStem.CONFIG CTIBASE 0x8D420000 0x8D520000 0x8D620000 0x8D720000
+
+// Attach to the CPU
+SYStem.Up
+
+// Select core 0
+CORE.Select 0
+
+// Mask interrupts
+SETUP.IMASKHLL ON
+SETUP.IMASKASM ON
+
+// Stop CPU execution
+Break
+
+// Delete all breakpoints
+Break.Delete /ALL
+
+// Disable Watchdog
+Data.Set ASD:0x1001c000 %Long 0x22000000
+
+// Switch to AArch64 mode
+DO "~~~~/lib/reset_mode.cmm" 1
+
+// Enable L2 shared cache
+Data.Set ASD:0x104007f0 %Long 0x301
+
+// Load and run BL2 to initialize DRAM
+PRINT "Load and run BL2"
+SYStem.Option TURBO ON
+Data.LOAD.ELF "~~~~/recovery-files/bl2.elf"
+SYStem.Option TURBO OFF
+
+// Set DRAM configuration
+Break mtk_mem_init_real /Onchip
+Go
+WAIT !State.Run()
+
+Data.Set is_use_ddr4 %Long &DRAM_USE_DDR4
+IF &DRAM_USE_DDR4==1
+(
+	IF &DRAM_FREQ_3200==1
+	(
+		Data.Set mt7987_ddr4_freq %Long 3200
+	)
+	ELSE
+	(
+		Data.Set mt7987_ddr4_freq %Long 2666
+	)
+)
+ELSE
+(
+	IF &DRAM_FREQ_2133==1
+	(
+		Data.Set mt7987_ddr3_freq %Long 2133
+	)
+	ELSE
+	(
+		Data.Set mt7987_ddr3_freq %Long 1866
+	)
+)
+Data.Set is_dram_debug %Long &DRAM_DEBUG_LOG
+
+Break bl2_plat_handle_pre_image_load /Onchip
+Go
+WAIT !State.Run()
+
+// Load BL31 and U-Boot
+PRINT "Loading U-Boot"
+SYStem.Option TURBO ON
+Data.LOAD.Binary "~~~~/recovery-files/&BL33" 0x41e00000
+
+PRINT "Loading BL31"
+Data.LOAD.ELF "~~~~/recovery-files/bl31.elf"
+SYStem.Option TURBO OFF
+
+// Run recovery
+Go
+
+ENDDO

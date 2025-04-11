@@ -1,0 +1,83 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2021, MediaTek Inc. All rights reserved.
+// Author: Weijie Gao <weijie.gao@mediatek.com>
+
+// Set to 1 to enable chip reset
+&ENRESET=1
+
+// Flash device selection
+&BL33="u-boot-snand-nmbm.bin" // SPI-NAND on SNFI with NMBM
+//&BL33="u-boot-nor.bin" // SPI-NOR on SPI-M
+
+// Flash device selection (for NAND debugging purpose)
+//&BL33="u-boot-snand.bin" // SPI-NAND on SNFI
+
+// System configuration
+SYStem.RESet
+
+IF &ENRESET==1
+(
+	SYStem.Option EnReset ON
+	SYStem.Option WaitReset 300.ms
+)
+else
+(
+	SYStem.Option EnReset OFF
+)
+
+SYStem.Option ResBreak OFF
+SYStem.JtagClock 10.MHz
+SYStem.CPU CortexA7MPCore
+
+// Multicore configuration
+SYStem.CONFIG CoreNumber 2
+CORE.ASSIGN 1.
+SYStem.CONFIG COREBASE 0x80810000 0x80812000
+
+// Attach to the CPU
+SYStem.Up
+
+// Select core 0
+CORE.Select 0
+
+// Mask interrupts
+SETUP.IMASKHLL ON
+SETUP.IMASKASM ON
+
+// Stop CPU execution
+Break
+
+// Delete all breakpoints
+Break.Delete /ALL
+
+// Disable Watchdog
+Data.Set SD:0x10212000 %Long 0x22000000
+
+// Switch to ARM mode
+Register.Set T 0
+
+// Load and run BL2 to initialize DRAM
+PRINT "Load and run BL2"
+SYStem.Option TURBO ON
+Data.LOAD.ELF "~~~~/recovery-files/bl2.elf"
+SYStem.Option TURBO OFF
+
+Break bl2_plat_handle_pre_image_load /Onchip
+Go
+WAIT !State.Run()
+
+// Load U-Boot
+PRINT "Loading U-Boot"
+SYStem.Option TURBO ON
+Data.LOAD.Binary "~~~~/recovery-files/&BL33" 0x41e00000
+SYStem.Option TURBO OFF
+
+Register.Set PC 0x41e00000
+
+// Switch to ARM mode
+Register.Set T 0
+
+// Run recovery
+Go
+
+ENDDO
