@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2025, MediaTek Inc. All rights reserved.
+// Author: Weijie Gao <weijie.gao@mediatek.com>
+
+PRIVATE &bootstrap
+
+&bootstrap=(Data.Long(ASD:0x1001f6f0)&0x00000c00)>>0xa
+
+IF &bootstrap==2 // Is booting from eMMC?
+(
+	Data.Set ASD:0x10001080 %Long 0x4000
+	Wait 1.ms
+	Data.Set ASD:0x10001084 %Long 0x4000
+)

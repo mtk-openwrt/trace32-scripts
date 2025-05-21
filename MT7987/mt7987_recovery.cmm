@@ -133,6 +133,9 @@ PRINT "Loading BL31"
 Data.LOAD.ELF "~~~~/recovery-files/bl31.elf"
 SYStem.Option TURBO OFF
 
+// Reset MSDC if bootstrap set to eMMC
+DO "~~~~/lib/reset_emmc.cmm"
+
 // Run recovery
 Go
 
